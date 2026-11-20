@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chest X-ray reader — pneumonia detection with explanations</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --film: #1c2830;        /* lightbox surface */
+    --film-2: #24343d;      /* raised controls on the lightbox */
+    --film-line: #34474f;
+    --film-ink: #dbe5e7;
+    --film-muted: #93a6ab;
+    --sheet: #eef2f1;       /* report sheet */
+    --paper: #f8faf9;
+    --ink: #16242a;
+    --muted: #57686d;
+    --rule: #cbd5d3;
+    --marker: #f2c14e;      /* annotation yellow: divider, focus, active */
+    --resnet: #2d6cb5;
+    --densenet: #7a4fc2;
+    --alert: #a2362b;
+    --font: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: var(--font); font-size: 16px; line-height: 1.5; color: var(--ink);
+    background: var(--sheet); font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--marker); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+  .app { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr); min-height: 100vh; }
+
+  /* ── Lightbox ─────────────────────────────────────────── */
+  .lightbox { background: var(--film); color: var(--film-ink); display: flex; flex-direction: column;
+              padding: 22px 28px 20px; min-width: 0; }
+  .masthead { display: flex; align-items: baseline; gap: 14px; }
+  .masthead h1 { flex: none; }
+  .masthead p { flex: 1 1 auto; min-width: 0; }
+  .masthead #again { margin-left: auto; align-self: center; padding: 7px 13px; font-size: 14px; }
+  .masthead h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  .masthead p { margin: 0; color: var(--film-muted); font-size: 14px; }
+
+  .stage { flex: 1; display: grid; place-items: center; padding: 18px 0; min-height: 420px; }
+  .drop { width: min(560px, 100%); aspect-ratio: 4 / 3.4; border: 1.5px dashed var(--film-line);
+          border-radius: 6px; display: grid; place-items: center; text-align: center; padding: 28px;
+          transition: border-color .15s, background .15s; }
+  .drop.over { border-color: var(--marker); background: rgba(242, 193, 78, .05); }
+  .drop h2 { font-size: 22px; font-weight: 600; margin: 14px 0 6px; }
+  .drop p { margin: 0 0 18px; color: var(--film-muted); font-size: 15px; }
+  .ribs { width: 96px; height: 96px; opacity: .55; }
+
+  .btn { white-space: nowrap; border: 0; border-radius: 6px; padding: 10px 16px; cursor: pointer; font-weight: 600; font-size: 15px; }
+  .btn-film { background: var(--film-ink); color: var(--film); }
+  .btn-film:hover { background: #fff; }
+  .btn-quiet { background: transparent; color: var(--film-ink); border: 1px solid var(--film-line); }
+  .btn-quiet:hover { border-color: var(--film-muted); }
+
+  .viewer { position: relative; user-select: none; touch-action: none; line-height: 0;
+            max-width: 100%; border-radius: 3px; overflow: hidden;
+            box-shadow: 0 0 0 1px #0d1418, 0 18px 50px -20px rgba(0,0,0,.6); }
+  .viewer img { display: block; max-width: 100%; max-height: max(340px, calc(100vh - 360px)); width: auto; height: auto; }
+  .viewer .layer { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; pointer-events: none; }
+  .divider { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--marker); transform: translateX(-1px);
+             cursor: ew-resize; }
+  .divider .grip { position: absolute; top: 50%; left: 50%; width: 34px; height: 34px; transform: translate(-50%, -50%);
+                   border-radius: 50%; background: var(--marker); display: grid; place-items: center;
+                   box-shadow: 0 2px 10px rgba(0,0,0,.4); }
+  .divider .grip svg { width: 18px; height: 18px; }
+  .tag { position: absolute; top: 12px; line-height: 1.2; font-size: 13px; font-weight: 600; padding: 5px 9px;
+         border-radius: 4px; background: rgba(16, 24, 28, .78); color: #fff; display: flex; gap: 7px; align-items: center; }
+  .tag i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  .tag.left { left: 12px; } .tag.right { right: 12px; }
+  .busy { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(28, 40, 48, .55);
+          line-height: 1.4; font-size: 15px; }
+  .scan { position: absolute; left: 0; right: 0; height: 2px; background: var(--marker); opacity: .8;
+          animation: scan 1.6s ease-in-out infinite alternate; }
+  @keyframes scan { from { top: 4%; } to { top: 96%; } }
+
+  .controls { display: flex; gap: 18px 24px; align-items: center; flex-wrap: wrap; }
+  .seg { display: inline-flex; background: var(--film-2); border-radius: 7px; padding: 3px; }
+  .seg button { border: 0; background: transparent; color: var(--film-muted); padding: 7px 12px; border-radius: 5px;
+                cursor: pointer; font-size: 14px; font-weight: 500; }
+  .seg button[aria-pressed="true"] { background: var(--film-ink); color: var(--film); font-weight: 600; }
+  .seg button:disabled { opacity: .45; cursor: default; }
+  .range { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--film-muted); }
+  .range input { accent-color: var(--marker); width: 120px; }
+  .controls .spacer { flex: 1; }
+
+  .samples { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--film-line); }
+  .samples h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--film-muted); }
+  .strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+  .thumb { border: 0; padding: 0; background: none; cursor: pointer; text-align: left; flex: 0 0 auto; }
+  .thumb img { width: 76px; height: 76px; object-fit: cover; border-radius: 4px; display: block;
+               outline: 2px solid transparent; outline-offset: 2px; filter: grayscale(1); }
+  .thumb[aria-current="true"] img { outline-color: var(--marker); }
+  .thumb span { display: block; font-size: 12px; color: var(--film-muted); margin-top: 6px; }
+
+  /* ── Report sheet ─────────────────────────────────────── */
+  .sheet { padding: 22px 34px 26px; display: flex; flex-direction: column; min-width: 0; }
+  .sheet-head { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 14px;
+                border-bottom: 1px solid var(--rule); }
+  .sheet-head h2 { margin: 0; font-size: 20px; font-weight: 700; }
+  .sheet-head span { color: var(--muted); font-size: 14px; }
+  .body { flex: 1; padding-top: 22px; max-width: 34rem; }
+
+  .intro p { margin: 0 0 14px; color: var(--muted); }
+  .intro p:first-child { color: var(--ink); font-size: 19px; line-height: 1.45; }
+  .intro ol { margin: 18px 0 0; padding-left: 1.3em; color: var(--muted); }
+  .intro li { margin-bottom: 8px; padding-left: 4px; }
+  .intro li::marker { color: var(--ink); font-weight: 700; }
+
+  .impression { font-size: 32px; line-height: 1.15; font-weight: 700; letter-spacing: -0.015em; margin: 0 0 8px; }
+  .impression.flag { color: var(--alert); }
+  .lede { margin: 0 0 26px; color: var(--muted); }
+
+  .reading { padding: 16px 0; border-top: 1px solid var(--rule); }
+  .reading:last-of-type { border-bottom: 1px solid var(--rule); }
+  .reading-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .reading-name { font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .reading-name i { width: 10px; height: 10px; border-radius: 2px; }
+  .reading-value { font-size: 15px; color: var(--muted); }
+  .reading-value b { color: var(--ink); font-size: 22px; font-weight: 700; margin-right: 4px; }
+  .bar { position: relative; height: 8px; background: #dbe3e1; border-radius: 4px; margin: 10px 0 6px; }
+  .bar span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; width: 0;
+              transition: width .6s cubic-bezier(.2, .7, .2, 1); }
+  .bar em { position: absolute; left: 50%; top: -4px; bottom: -4px; width: 2px; background: var(--ink); opacity: .55; }
+  .reading-foot { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { .bar span { transition: none; } .scan { animation: none; top: 50%; } }
+
+  .note h3 { font-size: 16px; margin: 26px 0 6px; }
+  .note p { margin: 0 0 10px; color: var(--muted); font-size: 15px; }
+  .error { margin: 0 0 18px; padding: 12px 14px; border-left: 3px solid var(--alert); background: #f7e9e6;
+           color: #5b1d16; font-size: 15px; }
+
+  .colophon { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--muted); }
+  .colophon p { margin: 0 0 4px; }
+  .colophon a { color: var(--ink); }
+
+  .method { margin: 4px 0 10px; }
+  .method .seg { background: #dde5e3; }
+  .method .seg button { color: var(--muted); }
+  .method .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+  @media (max-width: 900px) {
+    .masthead { flex-wrap: wrap; }
+    .controls .seg { width: 100%; }
+    .controls .seg button { flex: 1; padding: 7px 4px; font-size: 13px; }
+    .app { grid-template-columns: 1fr; }
+    .lightbox { padding: 18px 16px; }
+    .stage { min-height: 300px; }
+    .viewer img { max-height: 70vh; }
+    .sheet { padding: 22px 18px 28px; }
+    .impression { font-size: 27px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="lightbox" aria-label="X-ray viewer">
+    <header class="masthead">
+      <h1>Chest X-ray reader</h1>
+      <p>Pneumonia detection with ResNet50 and DenseNet121, and where each one looked</p>
+      <button class="btn btn-quiet" id="again" hidden>New image</button>
+    </header>
+
+    <div class="stage" id="stage">
+      <label class="drop" id="drop" for="file">
+        <div>
+          <svg class="ribs" viewBox="0 0 96 96" fill="none" stroke="#93a6ab" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+            <path d="M48 10v76"/>
+            <path d="M44 24c-10 0-22 3-27 12M44 35c-11 0-24 3-29 13M44 46c-11 0-24 4-29 14M44 57c-10 0-21 4-25 13"/>
+            <path d="M52 24c10 0 22 3 27 12M52 35c11 0 24 3 29 13M52 46c11 0 24 4 29 14M52 57c10 0 21 4 25 13"/>
+          </svg>
+          <h2>Drop a chest X-ray here</h2>
+          <p>JPG or PNG, frontal view. Or pick one of the test images below.</p>
+          <span class="btn btn-film" role="button">Choose an image</span>
+        </div>
+      </label>
+    </div>
+    <input type="file" id="file" accept="image/png,image/jpeg" class="sr">
+
+    <div class="controls" id="controls" hidden>
+      <div class="seg" role="group" aria-label="View">
+        <button data-view="compare" aria-pressed="true">Compare</button>
+        <button data-view="ResNet50" aria-pressed="false">ResNet50</button>
+        <button data-view="DenseNet121" aria-pressed="false">DenseNet121</button>
+        <button data-view="original" aria-pressed="false">Original</button>
+      </div>
+      <label class="range">Heatmap
+        <input type="range" id="opacity" min="0" max="100" value="80" aria-label="Heatmap strength">
+      </label>
+    </div>
+
+    <div class="samples" id="samples" hidden>
+      <h3>Test images from the dataset</h3>
+      <div class="strip" id="strip"></div>
+    </div>
+  </section>
+
+  <section class="sheet" aria-live="polite">
+    <div class="sheet-head">
+      <h2>Reading</h2>
+      <span id="status">Waiting for an image</span>
+    </div>
+    <div class="body" id="report">
+      <div class="intro">
+        <p>Upload a chest X-ray to see what two deep-learning models predict, and which parts of the lungs each one relied on.</p>
+        <ol>
+          <li>Both models read the image and give a probability of pneumonia.</li>
+          <li>Grad-CAM shows the regions that pushed each model toward its answer.</li>
+          <li>Drag the yellow divider to compare the two models on the same image.</li>
+        </ol>
+      </div>
+    </div>
+    <footer class="colophon">
+      <p>Research demo from “Beyond Visual Explanations”. Not a medical device and not for diagnosis.</p>
+      <p>Models trained on the Kermany pediatric chest X-ray dataset (Kaggle).<span id="links"></span></p>
+    </footer>
+  </section>
+</div>
+
+<script>
+// Fill these in after publishing the code and paper
+const LINKS = { code: "", paper: "" };
+
+const $ = (s, el = document) => el.querySelector(s);
+const COLORS = { ResNet50: "var(--resnet)", DenseNet121: "var(--densenet)" };
+const state = { data: null, view: "compare", method: "cam", split: 0.5, ig: {}, opacity: 0.8, busy: false };
+
+const links = [];
+if (LINKS.code) links.push(`<a href="${LINKS.code}">Source code</a>`);
+if (LINKS.paper) links.push(`<a href="${LINKS.paper}">Paper</a>`);
+if (links.length) $("#links").innerHTML = " " + links.join(" &nbsp; ");
+
+// ── Input ────────────────────────────────────────────────
+const drop = $("#drop");
+$("#file").addEventListener("change", e => e.target.files[0] && analyze({ file: e.target.files[0] }));
+["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => e.dataTransfer.files[0] && analyze({ file: e.dataTransfer.files[0] }));
+$("#again").addEventListener("click", reset);
+
+fetch("/api/samples").then(r => r.json()).then(list => {
+  if (!list.length) return;
+  $("#samples").hidden = false;
+  $("#strip").innerHTML = list.map(s => `
+    <button class="thumb" data-sample="${s.name}" aria-label="Analyze test image labelled ${s.label}">
+      <img src="${s.url}" alt="" loading="lazy"><span>${s.label}</span>
+    </button>`).join("");
+  $("#strip").addEventListener("click", e => {
+    const b = e.target.closest(".thumb"); if (!b) return;
+    document.querySelectorAll(".thumb").forEach(t => t.removeAttribute("aria-current"));
+    b.setAttribute("aria-current", "true");
+    analyze({ sample: b.dataset.sample, preview: b.querySelector("img").src });
+  });
+}).catch(() => {});
+
+async function analyze({ file, sample, preview }) {
+  if (state.busy) return;
+  if (file && !/^image\/(png|jpe?g)$/.test(file.type)) {
+    return showError("This file isn't a JPG or PNG. Upload a chest X-ray image in one of those formats.");
+  }
+  state.busy = true; state.ig = {};
+  setStatus("Reading…");
+  showBusy(file ? URL.createObjectURL(file) : preview, "Running both models");
+  const fd = new FormData();
+  file ? fd.append("file", file) : fd.append("sample", sample);
+  try {
+    const r = await fetch("/api/analyze", { method: "POST", body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || "The server could not read this image.");
+    state.data = j; state.view = "compare"; state.method = "cam"; state.split = 0.5;
+    renderViewer(); renderReport(); syncControls();
+    setStatus("Read just now");
+  } catch (err) {
+    showError(err.message === "Failed to fetch" ? "The server is not responding. Wait a moment and try again." : err.message);
+    if (!state.data) reset(true);
+  } finally { state.busy = false; }
+}
+
+// ── Viewer ───────────────────────────────────────────────
+function showBusy(src, label) {
+  const stage = $("#stage");
+  if (src) stage.innerHTML = `<div class="viewer"><img src="${src}" alt="Chest X-ray being analyzed">
+      <div class="busy"><div class="scan"></div><span>${label}…</span></div></div>`;
+  else { const v = $(".viewer"); v && v.insertAdjacentHTML("beforeend", `<div class="busy"><div class="scan"></div><span>${label}…</span></div>`); }
+}
+
+function overlayFor(name) {
+  return state.method === "ig" ? state.ig[name] : state.data.models.find(m => m.name === name).cam;
+}
+
+function renderViewer() {
+  const d = state.data, stage = $("#stage");
+  const left = d.models[0], right = d.models[1];
+  let layers = "", extras = "";
+  if (state.view === "compare") {
+    layers = `<img class="layer" id="ovL" src="${overlayFor(left.name) || ""}" alt="">
+              <img class="layer" id="ovR" src="${overlayFor(right.name) || ""}" alt="">`;
+    extras = `<div class="tag left"><i style="background:${COLORS[left.name]}"></i>${left.name}</div>
+              <div class="tag right"><i style="background:${COLORS[right.name]}"></i>${right.name}</div>
+              <div class="divider" id="divider" role="slider" tabindex="0" aria-label="Compare divider"
+                   aria-valuemin="0" aria-valuemax="100" aria-valuenow="50">
+                <div class="grip"><svg viewBox="0 0 18 18" fill="none" stroke="#1c2830" stroke-width="2" stroke-linecap="round"><path d="M6 4L2 9l4 5M12 4l4 5-4 5"/></svg></div></div>`;
+  } else if (state.view !== "original") {
+    layers = `<img class="layer" id="ovS" src="${overlayFor(state.view) || ""}" alt="">`;
+    extras = `<div class="tag left"><i style="background:${COLORS[state.view]}"></i>${state.view}</div>`;
+  }
+  stage.innerHTML = `<div class="viewer" id="viewer"><img src="${d.image}" alt="Analyzed chest X-ray">${layers}${extras}</div>`;
+  applyOpacity(); applySplit();
+  const div = $("#divider");
+  if (div) bindDivider(div);
+}
+
+function applyOpacity() {
+  document.querySelectorAll(".viewer .layer").forEach(l => l.style.opacity = state.opacity);
+}
+function applySplit() {
+  const p = state.split * 100;
+  const L = $("#ovL"), R = $("#ovR"), div = $("#divider");
+  if (L) L.style.clipPath = `inset(0 ${100 - p}% 0 0)`;
+  if (R) R.style.clipPath = `inset(0 0 0 ${p}%)`;
+  if (div) { div.style.left = p + "%"; div.setAttribute("aria-valuenow", Math.round(p)); }
+}
+function bindDivider(div) {
+  const viewer = $("#viewer");
+  const move = x => { const r = viewer.getBoundingClientRect();
+    state.split = Math.min(1, Math.max(0, (x - r.left) / r.width)); applySplit(); };
+  viewer.addEventListener("pointerdown", e => {
+    move(e.clientX); viewer.setPointerCapture(e.pointerId);
+    const mv = ev => move(ev.clientX);
+    const up = () => { viewer.removeEventListener("pointermove", mv); viewer.removeEventListener("pointerup", up); };
+    viewer.addEventListener("pointermove", mv); viewer.addEventListener("pointerup", up);
+  });
+  div.addEventListener("keydown", e => {
+    const step = e.shiftKey ? 0.1 : 0.02;
+    if (e.key === "ArrowLeft") state.split = Math.max(0, state.split - step);
+    else if (e.key === "ArrowRight") state.split = Math.min(1, state.split + step);
+    else return;
+    e.preventDefault(); applySplit();
+  });
+}
+
+// ── Controls ─────────────────────────────────────────────
+const onControl = async e => {
+  const b = e.target.closest("button[data-view], button[data-method]"); if (!b || !state.data || state.busy) return;
+  if (b.dataset.view) { state.view = b.dataset.view; }
+  if (b.dataset.method) { state.method = b.dataset.method; }
+  if (state.method === "ig") await ensureIG();
+  syncControls(); renderViewer();
+};
+$("#controls").addEventListener("click", onControl);
+$("#report").addEventListener("click", onControl);
+$("#opacity").addEventListener("input", e => { state.opacity = e.target.value / 100; applyOpacity(); });
+
+async function ensureIG() {
+  const names = state.view === "compare" ? state.data.models.map(m => m.name)
+              : state.view === "original" ? [] : [state.view];
+  const missing = names.filter(n => !state.ig[n]);
+  if (!missing.length) return;
+  state.busy = true;
+  showBusy(null, missing.length > 1 ? "Computing pixel-level maps for both models, about 30 seconds"
+                                     : `Computing the pixel-level map for ${missing[0]}, about 15 seconds`);
+  try {
+    for (const name of missing) {
+      const fd = new FormData(); fd.append("id", state.data.id); fd.append("model", name);
+      const r = await fetch("/api/ig", { method: "POST", body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || "Integrated Gradients failed for this image.");
+      state.ig[name] = j.overlay;
+    }
+  } catch (err) { showError(err.message); state.method = "cam"; }
+  finally { state.busy = false; }
+}
+
+function syncControls() {
+  $("#controls").hidden = !state.data;
+  $("#again").hidden = !state.data;
+  document.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", b.dataset.view === state.view));
+  document.querySelectorAll("[data-method]").forEach(b => {
+    b.setAttribute("aria-pressed", b.dataset.method === state.method);
+    b.disabled = state.view === "original";
+  });
+}
+
+// ── Report ───────────────────────────────────────────────
+function renderReport() {
+  const m = state.data.models, pos = m.filter(x => x.label === "PNEUMONIA").length;
+  const impression = pos === m.length ? "Both models read pneumonia"
+                   : pos === 0 ? "Both models read this as normal" : "The models disagree";
+  const lede = pos === m.length ? "Each model's probability is above the 50% decision threshold."
+             : pos === 0 ? "Each model's probability is below the 50% decision threshold."
+             : `${m.find(x => x.label === "PNEUMONIA").name} reads pneumonia; ${m.find(x => x.label === "NORMAL").name} does not. Compare where each one looked.`;
+  $("#report").innerHTML = `
+    <p class="impression ${pos === m.length ? "flag" : ""}">${impression}</p>
+    <p class="lede">${lede}</p>
+    ${m.map(x => {
+      const pct = (x.prob_pneumonia * 100);
+      return `<div class="reading">
+        <div class="reading-top">
+          <span class="reading-name"><i style="background:${COLORS[x.name]}"></i>${x.name}</span>
+          <span class="reading-value"><b>${pct.toFixed(1)}%</b>pneumonia</span>
+        </div>
+        <div class="bar" role="img" aria-label="${x.name}: ${pct.toFixed(1)} percent probability of pneumonia">
+          <span data-w="${pct}" style="background:${COLORS[x.name]}"></span><em></em></div>
+        <div class="reading-foot"><span>Normal</span><span>Threshold 50%</span><span>Pneumonia</span></div>
+      </div>`; }).join("")}
+    <div class="note">
+      <h3>Where each model looked</h3>
+      <p>Bright areas on the image are the regions that pushed a model toward its answer (Grad-CAM). In our study,
+         ResNet50 tends to focus on one area, while DenseNet121 spreads its attention across both lungs.</p>
+      <div class="method"><div class="seg" role="group" aria-label="Explanation method">
+        <button data-method="cam" aria-pressed="true">Grad-CAM</button>
+        <button data-method="ig" aria-pressed="false">Integrated Gradients</button>
+      </div></div>
+      <p>Integrated Gradients gives a finer, pixel-level map. It takes a few seconds per model.</p>
+    </div>`;
+  requestAnimationFrame(() => document.querySelectorAll(".bar span").forEach(s => s.style.width = s.dataset.w + "%"));
+}
+
+function showError(msg) {
+  const r = $("#report"), old = $(".error", r); old && old.remove();
+  r.insertAdjacentHTML("afterbegin", `<p class="error" role="alert">${msg}</p>`);
+  setStatus("Could not read the image");
+}
+function setStatus(t) { $("#status").textContent = t; }
+
+function reset(keepError) {
+  state.data = null; state.ig = {};
+  $("#stage").innerHTML = "";
+  $("#stage").appendChild(drop);
+  $("#controls").hidden = true; $("#again").hidden = true;
+  document.querySelectorAll(".thumb").forEach(t => t.removeAttribute("aria-current"));
+  if (keepError !== true) {
+    $("#report").innerHTML = `<div class="intro"><p>Upload a chest X-ray to see what two deep-learning models predict, and which parts of the lungs each one relied on.</p>
+      <ol><li>Both models read the image and give a probability of pneumonia.</li>
+      <li>Grad-CAM shows the regions that pushed each model toward its answer.</li>
+      <li>Drag the yellow divider to compare the two models on the same image.</li></ol></div>`;
+    setStatus("Waiting for an image");
+  }
+  $("#file").value = "";
+}
+</script>
+</body>
+</html>
