@@ -1,0 +1,15 @@
+torch>=2.3
+torchvision>=0.18
+numpy
+pandas
+matplotlib
+scikit-learn
+scipy
+scikit-image
+pillow
+tqdm
+grad-cam>=1.5
+lime>=0.2.0.1
+captum>=0.7
+kagglehub
+jupyter
